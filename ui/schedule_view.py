@@ -167,6 +167,10 @@ class ScheduleView(QWidget):
                 self.table.setItem(r, c, item)
 
     def generate_schedule(self):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(self, "Busy", "Schedule generation is already in progress.")
+            return
+
         reply = QMessageBox.question(
             self, "Generate Schedule",
             "This will replace the existing schedule. Continue?",
@@ -188,6 +192,8 @@ class ScheduleView(QWidget):
     def on_generate_done(self, result):
         self.progress.close()
         self.generate_btn.setEnabled(True)
+        if self.worker:
+            self.worker.wait()
 
         assigned = result.get("assigned", 0)
         sections = result.get("sections", [])
@@ -216,6 +222,8 @@ class ScheduleView(QWidget):
     def on_generate_error(self, error_msg):
         self.progress.close()
         self.generate_btn.setEnabled(True)
+        if self.worker:
+            self.worker.wait()
         QMessageBox.critical(self, "Error", f"Failed to generate schedule:\n{error_msg}")
 
     def clear_schedule(self):
