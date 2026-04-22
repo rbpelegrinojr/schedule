@@ -19,7 +19,7 @@ class PreferredVacantEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Day", "Period", "Remove"])
+        self.table.setHorizontalHeaderLabels(["Day", "Time Slot", "Remove"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setMaximumHeight(150)
         layout.addWidget(self.table)
@@ -34,7 +34,7 @@ class PreferredVacantEditor(QWidget):
         self.add_btn.clicked.connect(self.add_entry)
         add_row.addWidget(QLabel("Day:"))
         add_row.addWidget(self.day_combo)
-        add_row.addWidget(QLabel("Period:"))
+        add_row.addWidget(QLabel("Time Slot (1-8):"))
         add_row.addWidget(self.period_spin)
         add_row.addWidget(self.add_btn)
         layout.addLayout(add_row)

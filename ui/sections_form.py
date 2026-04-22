@@ -21,6 +21,8 @@ class SectionDialog(QDialog):
         self.room_combo = QComboBox()
         self.room_combo.addItem("-- No Room --", None)
         for room in db.get_all_rooms():
+            if room.get("is_lab"):
+                continue  # lab rooms are shared; not assigned to a section
             label = f"{room['room_number']} (Yr{room['year_level']} - {room['section']})"
             self.room_combo.addItem(label, room["id"])
 
