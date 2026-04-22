@@ -29,7 +29,7 @@ class RoomDialog(QDialog):
         form.addRow("Room Name:", self.room_name_edit)
         form.addRow("Type:", self.is_lab_check)
         form.addRow("Year Level (1-4):", self.year_level_spin)
-        form.addRow("Section:", self.section_edit)
+        form.addRow("Section / Label:", self.section_edit)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -64,11 +64,12 @@ class RoomDialog(QDialog):
 
     def get_data(self):
         is_lab = self.is_lab_check.isChecked()
+        section_text = self.section_edit.text().strip()
         return {
             "room_number": self.room_number_edit.text().strip(),
             "room_name": self.room_name_edit.text().strip(),
             "year_level": 0 if is_lab else self.year_level_spin.value(),
-            "section": "Lab" if is_lab else self.section_edit.text().strip(),
+            "section": section_text if section_text else ("Lab" if is_lab else ""),
             "is_lab": is_lab,
         }
 

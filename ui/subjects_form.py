@@ -92,6 +92,10 @@ class SubjectDialog(QDialog):
             QMessageBox.warning(self, "Validation",
                                 "A subject must have at least 1 lecture hour or a lab component.")
             return
+        if self.has_lab_check.isChecked() and self.lab_hours_spin.value() == 0:
+            QMessageBox.warning(self, "Validation",
+                                "Lab hours must be at least 1 when 'Has Lab' is checked.")
+            return
         self.accept()
 
     def get_data(self):

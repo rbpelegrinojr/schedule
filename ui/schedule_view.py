@@ -20,8 +20,10 @@ COLOR_LEC = QColor(200, 230, 200)    # light green – lecture block
 
 
 def _slot_range_text(start_slot, duration):
-    s = db.TIME_SLOT_STARTS[start_slot - 1]
-    e = db.TIME_SLOT_ENDS[start_slot + duration - 2]
+    start_idx = max(0, min(start_slot - 1, len(db.TIME_SLOT_STARTS) - 1))
+    end_idx = max(0, min(start_slot + duration - 2, len(db.TIME_SLOT_ENDS) - 1))
+    s = db.TIME_SLOT_STARTS[start_idx]
+    e = db.TIME_SLOT_ENDS[end_idx]
     return f"{s} – {e}"
 
 

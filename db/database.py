@@ -20,8 +20,10 @@ TIME_SLOT_LABELS = [
 
 def slot_time_range(start_slot, duration):
     """Return a human-readable time range string for a block."""
-    s = TIME_SLOT_STARTS[start_slot - 1]
-    e = TIME_SLOT_ENDS[start_slot + duration - 2]
+    start_idx = max(0, min(start_slot - 1, len(TIME_SLOT_STARTS) - 1))
+    end_idx = max(0, min(start_slot + duration - 2, len(TIME_SLOT_ENDS) - 1))
+    s = TIME_SLOT_STARTS[start_idx]
+    e = TIME_SLOT_ENDS[end_idx]
     return f"{s} - {e}"
 
 
