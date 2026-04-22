@@ -22,7 +22,21 @@ def _seed_if_empty():
         _, subject_id_map = seed_subjects()
         link_teacher_subjects(subject_id_map)
     except Exception as exc:
-        print(f"Auto-seed warning: {exc}")
+        # When running as a frozen windowed exe there is no console, so surface
+        # the error in a dialog box so the user is not left wondering.
+        import traceback
+        from PySide6.QtWidgets import QMessageBox
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Setup Warning")
+        msg.setText(
+            "Sample data could not be loaded automatically.\n\n"
+            "The application will still open, but you may need to add\n"
+            "teachers, rooms, sections, and subjects manually.\n\n"
+            f"Details: {exc}"
+        )
+        msg.setDetailedText(traceback.format_exc())
+        msg.exec()
 
 
 if __name__ == "__main__":

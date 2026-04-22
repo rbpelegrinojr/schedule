@@ -12,8 +12,7 @@ PREREQUISITES
 
 1. Python 3.10 or higher  (https://www.python.org/downloads/)
    • Make sure Python is added to PATH during installation.
-
-2. pip (bundled with Python 3.10+)
+   • pip is bundled with Python 3.10+.
 
 3. PyInstaller  (install in the next section)
 
