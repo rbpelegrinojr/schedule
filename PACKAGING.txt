@@ -1,0 +1,178 @@
+================================================================================
+  SCHOOL SCHEDULE MANAGER — PACKAGING INSTRUCTIONS (Windows Installer / MSI)
+================================================================================
+
+This guide walks you through building a standalone Windows executable with
+PyInstaller and then wrapping it in a distributable Windows installer (.msi)
+using WiX Toolset.
+
+--------------------------------------------------------------------------------
+PREREQUISITES
+--------------------------------------------------------------------------------
+
+1. Python 3.10 or higher  (https://www.python.org/downloads/)
+   • Make sure Python is added to PATH during installation.
+   • pip is bundled with Python 3.10+.
+
+3. PyInstaller  (install in the next section)
+
+4. WiX Toolset v3.11  (https://wixtoolset.org/releases/)
+   • Run the installer and restart your terminal so that heat.exe, candle.exe
+     and light.exe are on PATH.
+   • Alternatively install via Chocolatey:  choco install wixtoolset
+
+--------------------------------------------------------------------------------
+STEP 1 — Install Build Dependencies
+--------------------------------------------------------------------------------
+
+Open a Command Prompt or PowerShell in the project root (the folder that
+contains main.py) and run:
+
+    pip install -r requirements.txt
+    pip install pyinstaller
+
+--------------------------------------------------------------------------------
+STEP 2 — Build the Standalone Executable
+--------------------------------------------------------------------------------
+
+From the project root run:
+
+    pyinstaller schedule.spec
+
+PyInstaller will create two folders:
+  • build\ScheduleManager\   — temporary build artefacts (safe to delete)
+  • dist\ScheduleManager\    — the self-contained application folder
+
+The folder dist\ScheduleManager\ contains ScheduleManager.exe and all required
+Qt / Python DLLs.  You can test the executable immediately:
+
+    dist\ScheduleManager\ScheduleManager.exe
+
+On first launch the application:
+  1. Creates %APPDATA%\ScheduleManager\schedule.db  (user-writable location).
+  2. Initialises the database schema automatically.
+  3. Seeds a full set of sample teachers, rooms, sections, and subjects so the
+     app is ready to use right away without any manual setup.
+
+Subsequent launches skip seeding because records are already present.
+
+--------------------------------------------------------------------------------
+STEP 3 — Create the Windows Installer (.msi) with WiX
+--------------------------------------------------------------------------------
+
+3a. Harvest the dist folder into a WiX component fragment:
+
+    heat dir dist\ScheduleManager ^
+        -gg -scom -sreg -sfrag -srd ^
+        -cg ScheduleManagerComponents ^
+        -dr INSTALLFOLDER ^
+        -var var.SourceDir ^
+        -out installer\fragment.wxs
+
+3b. Compile the WiX sources:
+
+    candle.exe ^
+        -dSourceDir="dist\ScheduleManager" ^
+        installer\product.wxs ^
+        installer\fragment.wxs ^
+        -o installer\
+
+3c. Link into an .msi:
+
+    light.exe ^
+        -ext WixUIExtension ^
+        installer\product.wixobj ^
+        installer\fragment.wixobj ^
+        -o ScheduleManager-1.0.0.msi
+
+The output file ScheduleManager-1.0.0.msi can be distributed and installed
+on any Windows 10 / 11 machine without requiring Python.
+
+--------------------------------------------------------------------------------
+STEP 4 — Provide installer\product.wxs
+--------------------------------------------------------------------------------
+
+Create the file installer\product.wxs with the following content (replace
+the GUIDs with freshly generated values from https://www.guidgen.com/):
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="School Schedule Manager"
+           Language="1033"
+           Version="1.0.0"
+           Manufacturer="Your School or Organisation"
+           UpgradeCode="PUT-A-STABLE-GUID-HERE">
+
+    <Package InstallerVersion="301" Compressed="yes" InstallScope="perMachine" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <UIRef Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="ScheduleManager" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="School Schedule Manager" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="PUT-A-UNIQUE-GUID-HERE">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="School Schedule Manager"
+                  Description="Manage school timetables"
+                  Target="[INSTALLFOLDER]ScheduleManager.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanUpShortCut"
+                      Directory="ApplicationProgramsFolder"
+                      On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\ScheduleManager"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="School Schedule Manager" Level="1">
+      <ComponentGroupRef Id="ScheduleManagerComponents" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+
+  </Product>
+</Wix>
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+• The database (schedule.db) is stored in %APPDATA%\ScheduleManager\ on the
+  end-user's machine.  It is NOT inside Program Files.  This means it survives
+  an upgrade/reinstall and is not shared between Windows user accounts.
+
+• To completely remove all data, the user can delete the folder
+  %APPDATA%\ScheduleManager\ after uninstalling.
+
+• If you want a single-file .exe instead of the dist\ folder, replace
+  the EXE + COLLECT section in schedule.spec with:
+
+      exe = EXE(
+          pyz, a.scripts, a.binaries, a.zipfiles, a.datas,
+          name="ScheduleManager",
+          console=False,
+          upx=True,
+      )
+
+  Note that a single-file exe extracts to a temp folder on every launch, which
+  adds ~2-3 seconds of startup time and may be flagged by some antivirus tools.
+  The default directory mode (EXE + COLLECT) is recommended for production.
+
+• To rebuild after source changes, simply re-run: pyinstaller schedule.spec
+
+================================================================================

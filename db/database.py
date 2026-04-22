@@ -1,7 +1,29 @@
 import sqlite3
 import json
+import os
+import sys
 
-DB_PATH = "schedule.db"
+
+def _resolve_db_path():
+    """Return the path to schedule.db.
+
+    When running as a PyInstaller-frozen executable the database must live in
+    a user-writable directory; Program Files is read-only on modern Windows.
+    We use %APPDATA%\\ScheduleManager\\ so the file persists across upgrades.
+    During normal (source) development the database stays in the current
+    working directory, matching the original behaviour.
+    """
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "ScheduleManager",
+        )
+        os.makedirs(app_dir, exist_ok=True)
+        return os.path.join(app_dir, "schedule.db")
+    return "schedule.db"
+
+
+DB_PATH = _resolve_db_path()
 
 # Time slot definitions (1-8).  Slots 1-4 = morning, 5-8 = afternoon.
 TIME_SLOT_STARTS = ["7:30", "8:30", "9:30", "10:30", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM"]

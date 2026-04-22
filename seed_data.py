@@ -12,8 +12,9 @@ already exists in the database.
 import sys
 import os
 
-# Allow imports from the project root.
-sys.path.insert(0, os.path.dirname(__file__))
+# Allow imports from the project root when the script is executed directly.
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(__file__))
 
 import db.database as db
 
