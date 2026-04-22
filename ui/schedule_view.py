@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QComboBox, QLabel,
     QButtonGroup, QRadioButton, QGroupBox, QProgressDialog, QAbstractItemView,
+    QSpinBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
@@ -10,7 +11,18 @@ from scheduler.engine import ScheduleEngine
 
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-PERIOD_LABELS = [f"Period {i}" for i in range(1, 9)]
+
+# 8 one-hour slots: morning 7:30–11:30, afternoon 1:00–5:00
+TIME_SLOT_LABELS = db.TIME_SLOT_LABELS
+
+COLOR_LAB = QColor(173, 216, 230)    # light blue  – laboratory block
+COLOR_LEC = QColor(200, 230, 200)    # light green – lecture block
+
+
+def _slot_range_text(start_slot, duration):
+    s = db.TIME_SLOT_STARTS[start_slot - 1]
+    e = db.TIME_SLOT_ENDS[start_slot + duration - 2]
+    return f"{s} – {e}"
 
 
 class GenerateWorker(QThread):
@@ -56,6 +68,20 @@ class ScheduleView(QWidget):
         selector_layout.addWidget(self.selector_combo)
         controls.addLayout(selector_layout)
 
+        # Days per week setting
+        days_layout = QHBoxLayout()
+        days_layout.addWidget(QLabel("Days/Week:"))
+        self.days_spin = QSpinBox()
+        self.days_spin.setRange(1, 5)
+        self.days_spin.setValue(int(db.get_setting("days_per_week", 5)))
+        self.days_spin.setToolTip(
+            "Number of school days per week.\n"
+            "If fewer than 5, the remaining days are not scheduled\n"
+            "(teachers/students hold online classes on those days)."
+        )
+        days_layout.addWidget(self.days_spin)
+        controls.addLayout(days_layout)
+
         self.generate_btn = QPushButton("Generate Schedule")
         self.generate_btn.setMinimumWidth(150)
         self.clear_btn = QPushButton("Clear Schedule")
@@ -66,10 +92,28 @@ class ScheduleView(QWidget):
         controls.addWidget(self.clear_btn)
         layout.addLayout(controls)
 
+        # ── Legend ────────────────────────────────────────────────────────────
+        legend_layout = QHBoxLayout()
+        lab_lbl = QLabel("  Lab  ")
+        lab_lbl.setAutoFillBackground(True)
+        p = lab_lbl.palette()
+        p.setColor(lab_lbl.backgroundRole(), COLOR_LAB)
+        lab_lbl.setPalette(p)
+        lec_lbl = QLabel("  Lecture  ")
+        lec_lbl.setAutoFillBackground(True)
+        p2 = lec_lbl.palette()
+        p2.setColor(lec_lbl.backgroundRole(), COLOR_LEC)
+        lec_lbl.setPalette(p2)
+        legend_layout.addWidget(QLabel("Legend:"))
+        legend_layout.addWidget(lab_lbl)
+        legend_layout.addWidget(lec_lbl)
+        legend_layout.addStretch()
+        layout.addLayout(legend_layout)
+
         # ── Schedule grid ─────────────────────────────────────────────────────
         self.table = QTableWidget(8, 5)
         self.table.setHorizontalHeaderLabels(DAY_NAMES)
-        self.table.setVerticalHeaderLabels(PERIOD_LABELS)
+        self.table.setVerticalHeaderLabels(TIME_SLOT_LABELS)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -83,11 +127,26 @@ class ScheduleView(QWidget):
         self.view_btn.clicked.connect(self.load_schedule)
         self.generate_btn.clicked.connect(self.generate_schedule)
         self.clear_btn.clicked.connect(self.clear_schedule)
+        self.days_spin.valueChanged.connect(self._on_days_changed)
 
         self.worker = None
         self.refresh()
 
+    def _on_days_changed(self, value):
+        db.set_setting("days_per_week", value)
+        self._resize_table_columns(value)
+
+    def _resize_table_columns(self, days_per_week):
+        self.table.setColumnCount(days_per_week)
+        self.table.setHorizontalHeaderLabels(DAY_NAMES[:days_per_week])
+        self.load_schedule()
+
     def refresh(self):
+        days = int(db.get_setting("days_per_week", 5))
+        self.days_spin.blockSignals(True)
+        self.days_spin.setValue(days)
+        self.days_spin.blockSignals(False)
+        self._resize_table_columns(days)
         self.populate_selector()
 
     def on_mode_changed(self, _mode_id):
@@ -106,12 +165,18 @@ class ScheduleView(QWidget):
                 self.selector_combo.addItem(f"{t['name']} ({t['employee_id']})", t["id"])
         else:
             for r in db.get_all_rooms():
-                self.selector_combo.addItem(f"{r['room_number']} - {r['section']}", r["id"])
+                label = r["room_number"]
+                if r.get("room_name"):
+                    label += f" – {r['room_name']}"
+                if r.get("is_lab"):
+                    label += " [Lab]"
+                self.selector_combo.addItem(label, r["id"])
 
         self.selector_combo.blockSignals(False)
         self.load_schedule()
 
     def load_schedule(self):
+        self._reset_spans()
         self.clear_table()
         selected_id = self.selector_combo.currentData()
         if selected_id is None:
@@ -127,40 +192,79 @@ class ScheduleView(QWidget):
         teachers = {t["id"]: t["name"] for t in db.get_all_teachers()}
         subjects = {s["id"]: s for s in db.get_all_subjects()}
         sec_map = {s["id"]: s["section_name"] for s in db.get_all_sections()}
+        rooms = {r["id"]: r for r in db.get_all_rooms()}
+
+        days_per_week = self.table.columnCount()
 
         for entry in entries:
-            day = entry["day_of_week"]   # 1-5
-            period = entry["period"]      # 1-8
+            day = entry["day_of_week"]        # 1-5
+            start_slot = entry["start_slot"]  # 1-8
+            duration = entry.get("duration", 1)
+            is_lab = bool(entry.get("is_lab", 0))
+
             col = day - 1
-            row = period - 1
+            row = start_slot - 1
+
+            if col >= days_per_week:
+                continue  # day is outside active range
 
             subject_id = entry.get("subject_id")
             teacher_id = entry.get("teacher_id")
+            room_id = entry.get("room_id")
 
             if subject_id:
                 subj = subjects.get(subject_id)
                 subj_name = subj["subject_name"] if subj else f"Subject #{subject_id}"
-                teacher_name = teachers.get(teacher_id, "")
+                time_range = _slot_range_text(start_slot, duration)
+                room_info = rooms.get(room_id)
+                room_label = room_info["room_number"] if room_info else ""
 
                 if self.radio_teacher.isChecked():
-                    cell_text = f"{subj_name}\n[{sec_map.get(entry.get('section_id'), '')}]"
+                    cell_text = (
+                        f"{subj_name}\n"
+                        f"[{sec_map.get(entry.get('section_id'), '')}]\n"
+                        f"{time_range}"
+                    )
+                elif self.radio_room.isChecked():
+                    teacher_name = teachers.get(teacher_id, "")
+                    cell_text = (
+                        f"{subj_name}\n"
+                        f"{teacher_name}\n"
+                        f"[{sec_map.get(entry.get('section_id'), '')}]\n"
+                        f"{time_range}"
+                    )
                 else:
-                    cell_text = f"{subj_name}\n{teacher_name}"
+                    teacher_name = teachers.get(teacher_id, "")
+                    block_type = "LAB" if is_lab else "Lec"
+                    cell_text = (
+                        f"{subj_name}\n"
+                        f"{teacher_name}\n"
+                        f"{room_label}  [{block_type}]\n"
+                        f"{time_range}"
+                    )
 
                 item = QTableWidgetItem(cell_text)
-                item.setBackground(QColor(200, 230, 200))
+                item.setBackground(COLOR_LAB if is_lab else COLOR_LEC)
             else:
-                item = QTableWidgetItem("VACANT")
-                item.setBackground(QColor(245, 245, 245))
-                item.setForeground(QColor(150, 150, 150))
+                item = QTableWidgetItem("")
+                item.setBackground(QColor(255, 255, 255))
 
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            if duration > 1:
+                self.table.setSpan(row, col, duration, 1)
+
             self.table.setItem(row, col, item)
+
+    def _reset_spans(self):
+        for r in range(8):
+            for c in range(self.table.columnCount()):
+                self.table.setSpan(r, c, 1, 1)
 
     def clear_table(self):
         for r in range(8):
-            for c in range(5):
+            for c in range(self.table.columnCount()):
                 item = QTableWidgetItem("")
                 item.setBackground(QColor(255, 255, 255))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -202,13 +306,13 @@ class ScheduleView(QWidget):
         lines = [
             "Schedule generated successfully!",
             "",
-            f"Total assigned periods: {assigned}",
+            f"Total assigned blocks: {assigned}",
             "",
         ]
         if sections:
             lines.append("Sections processed:")
             for s in sections:
-                lines.append(f"  • Year {s['year_level']} - {s['section']}: {s['assigned']} periods")
+                lines.append(f"  • Year {s['year_level']} - {s['section']}: {s['assigned']} blocks")
         if errors:
             lines += ["", f"Warnings/Errors ({len(errors)}):"]
             for e in errors[:10]:
@@ -234,5 +338,6 @@ class ScheduleView(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             db.clear_schedules()
+            self._reset_spans()
             self.clear_table()
             QMessageBox.information(self, "Cleared", "All schedule entries have been cleared.")

@@ -16,8 +16,9 @@ class Room:
     id: Optional[int] = None
     room_number: str = ""
     room_name: str = ""
-    year_level: int = 1
+    year_level: int = 0
     section: str = ""
+    is_lab: bool = False
 
 
 @dataclass
@@ -33,7 +34,9 @@ class Subject:
     id: Optional[int] = None
     subject_name: str = ""
     subject_code: str = ""
-    periods_per_week: int = 5
+    lecture_hours: int = 2
+    lab_hours: int = 0
+    has_lab: bool = False
     teacher_id: Optional[int] = None
     year_level: Optional[int] = None
 
@@ -46,4 +49,11 @@ class ScheduleEntry:
     teacher_id: Optional[int] = None
     room_id: int = 0
     day_of_week: int = 1
-    period: int = 1
+    start_slot: int = 1
+    duration: int = 1
+    is_lab: bool = False
+
+
+@dataclass
+class Settings:
+    days_per_week: int = 5

@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QDialog, QFormLayout,
-    QLineEdit, QDialogButtonBox, QSpinBox, QComboBox, QAbstractItemView,
+    QLineEdit, QDialogButtonBox, QSpinBox, QComboBox, QCheckBox,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt
 import db.database as db
@@ -11,15 +12,24 @@ class SubjectDialog(QDialog):
     def __init__(self, parent=None, subject_data=None):
         super().__init__(parent)
         self.setWindowTitle("Add Subject" if subject_data is None else "Edit Subject")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.subject_name_edit = QLineEdit()
         self.subject_code_edit = QLineEdit()
-        self.periods_spin = QSpinBox()
-        self.periods_spin.setRange(1, 8)
-        self.periods_spin.setValue(5)
+
+        self.lecture_hours_spin = QSpinBox()
+        self.lecture_hours_spin.setRange(0, 8)
+        self.lecture_hours_spin.setValue(2)
+
+        self.has_lab_check = QCheckBox("This subject has a laboratory component")
+        self.has_lab_check.toggled.connect(self._on_has_lab_toggled)
+
+        self.lab_hours_spin = QSpinBox()
+        self.lab_hours_spin.setRange(1, 8)
+        self.lab_hours_spin.setValue(3)
+        self.lab_hours_spin.setEnabled(False)
 
         self.teacher_combo = QComboBox()
         self.teacher_combo.addItem("-- No Teacher --", None)
@@ -33,7 +43,9 @@ class SubjectDialog(QDialog):
 
         form.addRow("Subject Name:", self.subject_name_edit)
         form.addRow("Subject Code:", self.subject_code_edit)
-        form.addRow("Periods/Week:", self.periods_spin)
+        form.addRow("Lecture Hours/Week:", self.lecture_hours_spin)
+        form.addRow("Has Lab:", self.has_lab_check)
+        form.addRow("Lab Hours/Week:", self.lab_hours_spin)
         form.addRow("Teacher:", self.teacher_combo)
         form.addRow("Year Level:", self.year_level_combo)
         layout.addLayout(form)
@@ -48,7 +60,11 @@ class SubjectDialog(QDialog):
         if subject_data:
             self.subject_name_edit.setText(subject_data.get("subject_name", ""))
             self.subject_code_edit.setText(subject_data.get("subject_code", ""))
-            self.periods_spin.setValue(subject_data.get("periods_per_week", 5))
+            self.lecture_hours_spin.setValue(subject_data.get("lecture_hours", 2))
+            has_lab = bool(subject_data.get("has_lab", 0))
+            self.has_lab_check.setChecked(has_lab)
+            self.lab_hours_spin.setValue(subject_data.get("lab_hours", 3))
+            self.lab_hours_spin.setEnabled(has_lab)
             teacher_id = subject_data.get("teacher_id")
             if teacher_id:
                 for i in range(self.teacher_combo.count()):
@@ -62,6 +78,9 @@ class SubjectDialog(QDialog):
                         self.year_level_combo.setCurrentIndex(i)
                         break
 
+    def _on_has_lab_toggled(self, checked):
+        self.lab_hours_spin.setEnabled(checked)
+
     def validate_and_accept(self):
         if not self.subject_name_edit.text().strip():
             QMessageBox.warning(self, "Validation", "Subject Name is required.")
@@ -69,13 +88,20 @@ class SubjectDialog(QDialog):
         if not self.subject_code_edit.text().strip():
             QMessageBox.warning(self, "Validation", "Subject Code is required.")
             return
+        if self.lecture_hours_spin.value() == 0 and not self.has_lab_check.isChecked():
+            QMessageBox.warning(self, "Validation",
+                                "A subject must have at least 1 lecture hour or a lab component.")
+            return
         self.accept()
 
     def get_data(self):
+        has_lab = self.has_lab_check.isChecked()
         return {
             "subject_name": self.subject_name_edit.text().strip(),
             "subject_code": self.subject_code_edit.text().strip(),
-            "periods_per_week": self.periods_spin.value(),
+            "lecture_hours": self.lecture_hours_spin.value(),
+            "lab_hours": self.lab_hours_spin.value() if has_lab else 0,
+            "has_lab": has_lab,
             "teacher_id": self.teacher_combo.currentData(),
             "year_level": self.year_level_combo.currentData(),
         }
@@ -99,9 +125,9 @@ class SubjectsForm(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "Subject Name", "Code", "Periods/Week", "Teacher", "Year Level"]
+            ["ID", "Subject Name", "Code", "Lec Hrs", "Lab Hrs", "Teacher", "Year Level"]
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -121,11 +147,14 @@ class SubjectsForm(QWidget):
             self.table.setItem(row, 0, QTableWidgetItem(str(s["id"])))
             self.table.setItem(row, 1, QTableWidgetItem(s["subject_name"]))
             self.table.setItem(row, 2, QTableWidgetItem(s["subject_code"]))
-            self.table.setItem(row, 3, QTableWidgetItem(str(s["periods_per_week"])))
+            self.table.setItem(row, 3, QTableWidgetItem(str(s.get("lecture_hours", 2))))
+            lab_hrs = s.get("lab_hours", 0)
+            lab_label = str(lab_hrs) if s.get("has_lab") else "—"
+            self.table.setItem(row, 4, QTableWidgetItem(lab_label))
             teacher_name = teachers.get(s.get("teacher_id"), "")
-            self.table.setItem(row, 4, QTableWidgetItem(teacher_name))
+            self.table.setItem(row, 5, QTableWidgetItem(teacher_name))
             yr = s.get("year_level")
-            self.table.setItem(row, 5, QTableWidgetItem(f"Year {yr}" if yr else "All"))
+            self.table.setItem(row, 6, QTableWidgetItem(f"Year {yr}" if yr else "All"))
 
     def _selected_id(self):
         row = self.table.currentRow()
@@ -141,7 +170,8 @@ class SubjectsForm(QWidget):
             try:
                 db.create_subject(
                     data["subject_name"], data["subject_code"],
-                    data["periods_per_week"], data["teacher_id"], data["year_level"],
+                    data["lecture_hours"], data["lab_hours"], data["has_lab"],
+                    data["teacher_id"], data["year_level"],
                 )
                 self.refresh()
             except Exception as e:
@@ -161,7 +191,8 @@ class SubjectsForm(QWidget):
             try:
                 db.update_subject(
                     sid, data["subject_name"], data["subject_code"],
-                    data["periods_per_week"], data["teacher_id"], data["year_level"],
+                    data["lecture_hours"], data["lab_hours"], data["has_lab"],
+                    data["teacher_id"], data["year_level"],
                 )
                 self.refresh()
             except Exception as e:

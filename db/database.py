@@ -3,6 +3,27 @@ import json
 
 DB_PATH = "schedule.db"
 
+# Time slot definitions (1-8).  Slots 1-4 = morning, 5-8 = afternoon.
+TIME_SLOT_STARTS = ["7:30", "8:30", "9:30", "10:30", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM"]
+TIME_SLOT_ENDS   = ["8:30", "9:30", "10:30", "11:30", "2:00 PM", "3:00 PM", "4:00 PM", "5:00 PM"]
+TIME_SLOT_LABELS = [
+    "7:30 - 8:30",
+    "8:30 - 9:30",
+    "9:30 - 10:30",
+    "10:30 - 11:30",
+    "1:00 - 2:00 PM",
+    "2:00 - 3:00 PM",
+    "3:00 - 4:00 PM",
+    "4:00 - 5:00 PM",
+]
+
+
+def slot_time_range(start_slot, duration):
+    """Return a human-readable time range string for a block."""
+    s = TIME_SLOT_STARTS[start_slot - 1]
+    e = TIME_SLOT_ENDS[start_slot + duration - 2]
+    return f"{s} - {e}"
+
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -26,8 +47,9 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     room_number TEXT NOT NULL,
                     room_name TEXT DEFAULT '',
-                    year_level INTEGER NOT NULL,
-                    section TEXT NOT NULL
+                    year_level INTEGER NOT NULL DEFAULT 0,
+                    section TEXT NOT NULL DEFAULT '',
+                    is_lab INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS sections (
@@ -42,7 +64,9 @@ def init_db():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     subject_name TEXT NOT NULL,
                     subject_code TEXT UNIQUE NOT NULL,
-                    periods_per_week INTEGER NOT NULL DEFAULT 5,
+                    lecture_hours INTEGER NOT NULL DEFAULT 2,
+                    lab_hours INTEGER NOT NULL DEFAULT 0,
+                    has_lab INTEGER NOT NULL DEFAULT 0,
                     teacher_id INTEGER,
                     year_level INTEGER,
                     FOREIGN KEY (teacher_id) REFERENCES teachers(id)
@@ -55,18 +79,57 @@ def init_db():
                     teacher_id INTEGER,
                     room_id INTEGER NOT NULL,
                     day_of_week INTEGER NOT NULL,
-                    period INTEGER NOT NULL,
+                    start_slot INTEGER NOT NULL,
+                    duration INTEGER NOT NULL DEFAULT 1,
+                    is_lab INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY (section_id) REFERENCES sections(id),
                     FOREIGN KEY (subject_id) REFERENCES subjects(id),
                     FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-                    FOREIGN KEY (room_id) REFERENCES rooms(id),
-                    UNIQUE(section_id, day_of_week, period),
-                    UNIQUE(teacher_id, day_of_week, period),
-                    UNIQUE(room_id, day_of_week, period)
+                    FOREIGN KEY (room_id) REFERENCES rooms(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 );
             """)
+        _migrate()
     except Exception as e:
         print(f"init_db error: {e}")
+
+
+def _migrate():
+    """Apply schema migrations to handle upgrades from older schema versions."""
+    try:
+        with get_connection() as conn:
+            # --- rooms table ---
+            rooms_cols = {row[1] for row in conn.execute("PRAGMA table_info(rooms)")}
+            if "is_lab" not in rooms_cols:
+                conn.execute("ALTER TABLE rooms ADD COLUMN is_lab INTEGER NOT NULL DEFAULT 0")
+
+            # --- subjects table ---
+            subj_cols = {row[1] for row in conn.execute("PRAGMA table_info(subjects)")}
+            if "lecture_hours" not in subj_cols:
+                conn.execute("ALTER TABLE subjects ADD COLUMN lecture_hours INTEGER NOT NULL DEFAULT 2")
+            if "lab_hours" not in subj_cols:
+                conn.execute("ALTER TABLE subjects ADD COLUMN lab_hours INTEGER NOT NULL DEFAULT 0")
+            if "has_lab" not in subj_cols:
+                conn.execute("ALTER TABLE subjects ADD COLUMN has_lab INTEGER NOT NULL DEFAULT 0")
+
+            # --- schedules table: rename period -> start_slot ---
+            sched_cols = {row[1] for row in conn.execute("PRAGMA table_info(schedules)")}
+            if "period" in sched_cols and "start_slot" not in sched_cols:
+                conn.execute("ALTER TABLE schedules RENAME COLUMN period TO start_slot")
+                sched_cols = {row[1] for row in conn.execute("PRAGMA table_info(schedules)")}
+            if "start_slot" not in sched_cols:
+                conn.execute("ALTER TABLE schedules ADD COLUMN start_slot INTEGER NOT NULL DEFAULT 1")
+            if "duration" not in sched_cols:
+                conn.execute("ALTER TABLE schedules ADD COLUMN duration INTEGER NOT NULL DEFAULT 1")
+            if "is_lab" not in sched_cols:
+                conn.execute("ALTER TABLE schedules ADD COLUMN is_lab INTEGER NOT NULL DEFAULT 0")
+
+    except Exception as e:
+        print(f"_migrate error: {e}")
 
 
 # ── Teachers ──────────────────────────────────────────────────────────────────
@@ -167,12 +230,37 @@ def get_room_by_id(room_id):
         return None
 
 
-def create_room(room_number, room_name, year_level, section):
+def get_lab_rooms():
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM rooms WHERE is_lab=1 ORDER BY room_number"
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"get_lab_rooms error: {e}")
+        return []
+
+
+def get_regular_rooms():
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM rooms WHERE is_lab=0 ORDER BY year_level, section"
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"get_regular_rooms error: {e}")
+        return []
+
+
+def create_room(room_number, room_name, year_level, section, is_lab=False):
     try:
         with get_connection() as conn:
             cur = conn.execute(
-                "INSERT INTO rooms (room_number, room_name, year_level, section) VALUES (?, ?, ?, ?)",
-                (room_number, room_name, year_level, section)
+                "INSERT INTO rooms (room_number, room_name, year_level, section, is_lab) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (room_number, room_name, year_level, section, int(is_lab))
             )
             return cur.lastrowid
     except Exception as e:
@@ -180,12 +268,12 @@ def create_room(room_number, room_name, year_level, section):
         raise
 
 
-def update_room(room_id, room_number, room_name, year_level, section):
+def update_room(room_id, room_number, room_name, year_level, section, is_lab=False):
     try:
         with get_connection() as conn:
             conn.execute(
-                "UPDATE rooms SET room_number=?, room_name=?, year_level=?, section=? WHERE id=?",
-                (room_number, room_name, year_level, section, room_id)
+                "UPDATE rooms SET room_number=?, room_name=?, year_level=?, section=?, is_lab=? WHERE id=?",
+                (room_number, room_name, year_level, section, int(is_lab), room_id)
             )
     except Exception as e:
         print(f"update_room error: {e}")
@@ -290,13 +378,16 @@ def get_subjects_by_year_level(year_level):
         return []
 
 
-def create_subject(subject_name, subject_code, periods_per_week, teacher_id=None, year_level=None):
+def create_subject(subject_name, subject_code, lecture_hours, lab_hours, has_lab,
+                   teacher_id=None, year_level=None):
     try:
         with get_connection() as conn:
             cur = conn.execute(
-                "INSERT INTO subjects (subject_name, subject_code, periods_per_week, teacher_id, year_level) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (subject_name, subject_code, periods_per_week, teacher_id, year_level)
+                "INSERT INTO subjects "
+                "(subject_name, subject_code, lecture_hours, lab_hours, has_lab, teacher_id, year_level) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (subject_name, subject_code, lecture_hours, lab_hours, int(has_lab),
+                 teacher_id, year_level)
             )
             return cur.lastrowid
     except Exception as e:
@@ -304,13 +395,15 @@ def create_subject(subject_name, subject_code, periods_per_week, teacher_id=None
         raise
 
 
-def update_subject(subject_id, subject_name, subject_code, periods_per_week, teacher_id=None, year_level=None):
+def update_subject(subject_id, subject_name, subject_code, lecture_hours, lab_hours, has_lab,
+                   teacher_id=None, year_level=None):
     try:
         with get_connection() as conn:
             conn.execute(
-                "UPDATE subjects SET subject_name=?, subject_code=?, periods_per_week=?, "
-                "teacher_id=?, year_level=? WHERE id=?",
-                (subject_name, subject_code, periods_per_week, teacher_id, year_level, subject_id)
+                "UPDATE subjects SET subject_name=?, subject_code=?, lecture_hours=?, "
+                "lab_hours=?, has_lab=?, teacher_id=?, year_level=? WHERE id=?",
+                (subject_name, subject_code, lecture_hours, lab_hours, int(has_lab),
+                 teacher_id, year_level, subject_id)
             )
     except Exception as e:
         print(f"update_subject error: {e}")
@@ -337,7 +430,7 @@ def get_schedule_by_section(section_id):
                 LEFT JOIN subjects s ON sc.subject_id = s.id
                 LEFT JOIN teachers t ON sc.teacher_id = t.id
                 WHERE sc.section_id = ?
-                ORDER BY sc.day_of_week, sc.period
+                ORDER BY sc.day_of_week, sc.start_slot
                 """,
                 (section_id,)
             ).fetchall()
@@ -357,7 +450,7 @@ def get_schedule_by_teacher(teacher_id):
                 LEFT JOIN subjects s ON sc.subject_id = s.id
                 LEFT JOIN sections sec ON sc.section_id = sec.id
                 WHERE sc.teacher_id = ?
-                ORDER BY sc.day_of_week, sc.period
+                ORDER BY sc.day_of_week, sc.start_slot
                 """,
                 (teacher_id,)
             ).fetchall()
@@ -379,7 +472,7 @@ def get_schedule_by_room(room_id):
                 LEFT JOIN teachers t ON sc.teacher_id = t.id
                 LEFT JOIN sections sec ON sc.section_id = sec.id
                 WHERE sc.room_id = ?
-                ORDER BY sc.day_of_week, sc.period
+                ORDER BY sc.day_of_week, sc.start_slot
                 """,
                 (room_id,)
             ).fetchall()
@@ -397,17 +490,45 @@ def clear_schedules():
         print(f"clear_schedules error: {e}")
 
 
-def save_schedule_entry(section_id, subject_id, teacher_id, room_id, day_of_week, period):
+def save_schedule_entry(section_id, subject_id, teacher_id, room_id,
+                        day_of_week, start_slot, duration=1, is_lab=False):
     try:
         with get_connection() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO schedules
-                    (section_id, subject_id, teacher_id, room_id, day_of_week, period)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO schedules
+                    (section_id, subject_id, teacher_id, room_id,
+                     day_of_week, start_slot, duration, is_lab)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (section_id, subject_id, teacher_id, room_id, day_of_week, period)
+                (section_id, subject_id, teacher_id, room_id,
+                 day_of_week, start_slot, duration, int(is_lab))
             )
     except Exception as e:
         print(f"save_schedule_entry error: {e}")
         raise
+
+
+# ── Settings ──────────────────────────────────────────────────────────────────
+
+def get_setting(key, default=None):
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key=?", (key,)
+            ).fetchone()
+            return row["value"] if row else default
+    except Exception as e:
+        print(f"get_setting error: {e}")
+        return default
+
+
+def set_setting(key, value):
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, str(value))
+            )
+    except Exception as e:
+        print(f"set_setting error: {e}")
